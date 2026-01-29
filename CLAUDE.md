@@ -63,12 +63,22 @@ When you make or recommend a decision about:
 - Architecture patterns or data flow
 - Authentication, storage, or infrastructure choices
 - Workflows, processes, or tooling
+- User experience patterns (progress indicators, notifications, etc.)
+- Feature scope or MVP boundaries
 
 You MUST:
 1. **Document it** — Add a new entry to `DECISIONS.md` with context, alternatives, and consequences
 2. **Check for conflicts** — Before adding, review existing decisions for conflicts
 3. **Note changes** — If a new decision supersedes an old one, add it to the "Decision Changes" section and update the old decision's status to "Superseded"
 4. **Ask when unclear** — If you're unsure whether something counts as a decision, ask
+
+**WORKFLOW INTEGRATION:** Decisions emerge during ALL interactions:
+- `/workflows:brainstorm` — Capture decisions about approach, scope, and architecture
+- `/workflows:plan` — Capture decisions about implementation strategy, libraries, and patterns
+- `/workflows:work` — Capture decisions made during implementation (e.g., "chose X library because Y")
+- **Any conversation** — Capture decisions made during regular chat (e.g., user says "let's use Redis for caching")
+
+**At the end of each session** (workflow or regular conversation), review the discussion for any decisions made and add them to `DECISIONS.md` before completing. If the user makes a choice between options, selects a technology, or agrees to an approach — that's a decision worth documenting.
 
 This creates a searchable history of why the project is built the way it is.
 
