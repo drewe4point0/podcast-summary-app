@@ -53,6 +53,27 @@ pnpm db:types            # Regenerate types from schema
 
 ---
 
+## Engineering Decisions
+
+**CRITICAL:** All engineering decisions must be documented in `DECISIONS.md`.
+
+When you make or recommend a decision about:
+- APIs, services, or external integrations
+- Libraries, packages, or dependencies
+- Architecture patterns or data flow
+- Authentication, storage, or infrastructure choices
+- Workflows, processes, or tooling
+
+You MUST:
+1. **Document it** — Add a new entry to `DECISIONS.md` with context, alternatives, and consequences
+2. **Check for conflicts** — Before adding, review existing decisions for conflicts
+3. **Note changes** — If a new decision supersedes an old one, add it to the "Decision Changes" section and update the old decision's status to "Superseded"
+4. **Ask when unclear** — If you're unsure whether something counts as a decision, ask
+
+This creates a searchable history of why the project is built the way it is.
+
+---
+
 ## Workflow
 
 1. **Plan first** — Use Plan Mode (shift+tab twice). Go back and forth until the plan is solid. Then switch to auto-accept and execute.
@@ -113,6 +134,8 @@ function getErrorMessage(error: unknown): string {
   /components   # UI components
   /lib          # Business logic, Supabase client
   /types        # TypeScript types
+
+DECISIONS.md    # Engineering decisions log (check before making new decisions)
 ```
 
 ---
