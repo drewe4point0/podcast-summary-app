@@ -3,17 +3,29 @@ import type { Result } from '@/types';
 
 interface TranscriptSegment {
   text: string;
-  start: number;
-  duration: number;
+  start: string;
+  dur: string;
 }
 
-interface YouTubeTranscriptResponse {
-  content: TranscriptSegment[];
-  title?: string;
+interface TranscriptTrack {
+  language: string;
+  transcript: TranscriptSegment[];
 }
+
+interface TranscriptItem {
+  id: string;
+  title?: string;
+  text?: string; // Full pre-joined transcript text
+  tracks?: TranscriptTrack[]; // Individual transcript segments by language
+  error?: string;
+}
+
+// The API returns an array directly, not wrapped in an object
+type YouTubeTranscriptResponse = TranscriptItem[];
 
 /**
  * Fetch transcript from YouTube using youtube-transcript.io API
+ * API docs: https://www.youtube-transcript.io/api
  */
 export async function fetchTranscript(youtubeId: string): Promise<Result<string>> {
   const apiKey = process.env.YOUTUBE_TRANSCRIPT_API_KEY;
@@ -26,13 +38,16 @@ export async function fetchTranscript(youtubeId: string): Promise<Result<string>
     // Use retry wrapper for resilience
     const response = await retry(async () => {
       const res = await fetch(
-        `https://api.youtube-transcript.io/v1/transcript?video_id=${youtubeId}`,
+        'https://www.youtube-transcript.io/api/transcripts',
         {
-          method: 'GET',
+          method: 'POST',
           headers: {
             Authorization: `Basic ${apiKey}`,
             'Content-Type': 'application/json',
           },
+          body: JSON.stringify({
+            ids: [youtubeId],
+          }),
         }
       );
 
@@ -40,8 +55,8 @@ export async function fetchTranscript(youtubeId: string): Promise<Result<string>
         const errorText = await res.text();
 
         // Check for specific error cases
-        if (res.status === 404) {
-          throw new Error('No transcript available for this video. The video may not have captions enabled.');
+        if (res.status === 401) {
+          throw new Error('Invalid API key. Please check your YOUTUBE_TRANSCRIPT_API_KEY.');
         }
         if (res.status === 403) {
           throw new Error('Cannot access transcript. The video may be private or restricted.');
@@ -56,19 +71,51 @@ export async function fetchTranscript(youtubeId: string): Promise<Result<string>
       return res.json();
     }, 3, 2000);
 
+    // The API returns an array directly
     const data = response as YouTubeTranscriptResponse;
 
-    // Check if we got content
-    if (!data.content || data.content.length === 0) {
-      return { ok: false, error: 'No transcript content found for this video.' };
+    // Check if we got any results
+    if (!Array.isArray(data) || data.length === 0) {
+      console.log('[fetchTranscript] Empty or invalid response');
+      return { ok: false, error: 'No transcript returned from API.' };
     }
 
-    // Combine all segments into a single text
-    const fullText = data.content
-      .map((segment) => segment.text.trim())
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const transcriptItem = data[0];
+
+    if (!transcriptItem) {
+      return { ok: false, error: 'No transcript data found.' };
+    }
+
+    // Check for error in the transcript item
+    if (transcriptItem.error) {
+      return { ok: false, error: transcriptItem.error };
+    }
+
+    // The API provides a pre-joined 'text' field with the full transcript
+    let fullText = '';
+
+    if (transcriptItem.text) {
+      // Use the pre-joined text if available
+      fullText = transcriptItem.text.trim();
+    } else if (transcriptItem.tracks && transcriptItem.tracks.length > 0) {
+      // Fall back to combining segments from the first track
+      const track = transcriptItem.tracks[0];
+      if (track?.transcript && track.transcript.length > 0) {
+        fullText = track.transcript
+          .map((segment) => segment.text.trim())
+          .filter((text) => text && text !== '\n') // Filter out empty segments
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      }
+    }
+
+    if (!fullText) {
+      return { ok: false, error: 'No transcript available for this video. The video may not have captions enabled.' };
+    }
+
+    // Clean up any remaining artifacts
+    fullText = fullText.replace(/\s+/g, ' ').trim();
 
     if (!fullText) {
       return { ok: false, error: 'Transcript is empty.' };
