@@ -41,6 +41,9 @@ coverage/
 Thumbs.db
 ehthumbs.db
 
+# TypeScript
+*.tsbuildinfo
+
 # Misc
 *.log
 *.tmp
