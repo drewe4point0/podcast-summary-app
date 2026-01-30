@@ -11,9 +11,10 @@ interface ProgressCallback {
   (current: number, total: number): void;
 }
 
-// Max tokens per chunk (leaving room for prompt and response)
-const MAX_TOKENS_PER_CHUNK = 6000;
-const OVERLAP_TOKENS = 300;
+// Max tokens per chunk - increased to reduce number of API calls for long videos
+// GPT-4o supports 128k context, so we can use larger chunks
+const MAX_TOKENS_PER_CHUNK = 15000;
+const OVERLAP_TOKENS = 500;
 
 /**
  * Search for speaker information using Tavily API
@@ -104,7 +105,7 @@ Rules:
           { role: 'user', content: userPrompt },
         ],
         temperature: 0.3, // Lower temperature for more consistent formatting
-        max_tokens: 8000,
+        max_tokens: 16000, // Increased to handle larger chunks
       });
     },
     3,
