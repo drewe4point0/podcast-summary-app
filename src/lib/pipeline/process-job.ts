@@ -1,9 +1,13 @@
 import { createAdminClient } from '@/lib/supabase/server';
-import { getErrorMessage } from '@/lib/utils';
+import { getErrorMessage, estimateTokens } from '@/lib/utils';
 import { fetchTranscript } from './fetch-transcript';
 import { cleanTranscript } from './clean-transcript';
 import { summarize, PROMPT_VERSION } from './summarize';
 import type { JobProgress, VideoMetadata } from '@/types';
+
+// Threshold for skipping intensive cleaning (to avoid Vercel timeout)
+// Transcripts over this size will use quick format instead
+const QUICK_FORMAT_THRESHOLD = 20000; // tokens
 
 /**
  * Update job progress in database
@@ -103,41 +107,64 @@ export async function processJob(jobId: string): Promise<void> {
     // ═══════════════════════════════════════════════════════════════
     // STAGE 2: Clean Transcript
     // ═══════════════════════════════════════════════════════════════
-    await updateJobProgress(
-      jobId,
-      { stage: 'cleaning', message: 'Formatting transcript...', current: 0, total: 1 },
-      'cleaning'
-    );
+    const transcriptTokens = estimateTokens(rawTranscript);
+    const useQuickFormat = transcriptTokens > QUICK_FORMAT_THRESHOLD;
 
-    const cleanResult = await cleanTranscript(
-      rawTranscript,
-      videoMetadata,
-      async (current, total) => {
-        await updateJobProgress(jobId, {
-          stage: 'cleaning',
-          message: `Cleaning transcript: ${current}/${total} chunks`,
-          current,
-          total,
-        });
-      }
-    );
+    let cleanedText: string;
+    let speakers: string[];
 
-    if (!cleanResult.ok) {
+    if (useQuickFormat) {
+      // For very long transcripts, skip intensive AI cleaning to avoid timeouts
+      // Just do basic formatting
       await updateJobProgress(
         jobId,
-        { stage: 'failed', message: cleanResult.error },
-        'failed',
-        cleanResult.error
+        { stage: 'cleaning', message: 'Quick formatting transcript (long video)...', current: 1, total: 1 },
+        'cleaning'
       );
-      return;
+
+      cleanedText = quickFormatTranscript(rawTranscript, videoMetadata);
+      speakers = [videoMetadata.channel]; // Use channel name as default speaker
+    } else {
+      // Normal AI-powered cleaning for shorter transcripts
+      await updateJobProgress(
+        jobId,
+        { stage: 'cleaning', message: 'Formatting transcript...', current: 0, total: 1 },
+        'cleaning'
+      );
+
+      const cleanResult = await cleanTranscript(
+        rawTranscript,
+        videoMetadata,
+        async (current, total) => {
+          await updateJobProgress(jobId, {
+            stage: 'cleaning',
+            message: `Cleaning transcript: ${current}/${total} chunks`,
+            current,
+            total,
+          });
+        }
+      );
+
+      if (!cleanResult.ok) {
+        await updateJobProgress(
+          jobId,
+          { stage: 'failed', message: cleanResult.error },
+          'failed',
+          cleanResult.error
+        );
+        return;
+      }
+
+      cleanedText = cleanResult.data.cleanedText;
+      speakers = cleanResult.data.speakers;
     }
 
     // Update transcript with cleaned version
     const { error: updateTranscriptError } = await supabase
       .from('transcripts')
       .update({
-        cleaned_text: cleanResult.data.cleanedText,
-        speakers: cleanResult.data.speakers,
+        cleaned_text: cleanedText,
+        speakers: speakers,
       })
       .eq('job_id', jobId);
 
@@ -154,7 +181,7 @@ export async function processJob(jobId: string): Promise<void> {
       'summarizing'
     );
 
-    const summaryResult = await summarize(cleanResult.data.cleanedText, videoMetadata);
+    const summaryResult = await summarize(cleanedText, videoMetadata);
 
     if (!summaryResult.ok) {
       await updateJobProgress(
@@ -212,6 +239,40 @@ export async function processJob(jobId: string): Promise<void> {
       errorMessage
     );
   }
+}
+
+/**
+ * Quick format for long transcripts - skip AI and do basic text cleanup
+ * This is faster and avoids Vercel timeouts for long videos
+ */
+function quickFormatTranscript(rawText: string, metadata: VideoMetadata): string {
+  // Add speaker label at the start
+  const speakerName = metadata.channel;
+
+  // Split into sentences and add paragraph breaks
+  const sentences = rawText
+    .replace(/([.!?])\s+/g, '$1\n')
+    .split('\n')
+    .filter(s => s.trim());
+
+  // Group sentences into paragraphs (roughly 3-4 sentences each)
+  const paragraphs: string[] = [];
+  let currentParagraph: string[] = [];
+
+  for (const sentence of sentences) {
+    currentParagraph.push(sentence.trim());
+    if (currentParagraph.length >= 4) {
+      paragraphs.push(currentParagraph.join(' '));
+      currentParagraph = [];
+    }
+  }
+
+  if (currentParagraph.length > 0) {
+    paragraphs.push(currentParagraph.join(' '));
+  }
+
+  // Format with speaker label
+  return `[${speakerName}]: ${paragraphs.join('\n\n')}`;
 }
 
 /**
