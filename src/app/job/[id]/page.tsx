@@ -19,6 +19,7 @@ export default function JobPage() {
   const [jobResult, setJobResult] = useState<JobResult | null>(null);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [processingStarted, setProcessingStarted] = useState(false);
 
   const fetchJob = useCallback(async () => {
     try {
@@ -38,6 +39,22 @@ export default function JobPage() {
     }
   }, [jobId]);
 
+  // Start processing the job (called once when job is pending)
+  const startProcessing = useCallback(async () => {
+    if (processingStarted) return;
+    setProcessingStarted(true);
+
+    try {
+      // Fire-and-forget: call start endpoint which will process the job
+      // We don't await this - let it run in background while we poll
+      fetch(`/api/jobs/${jobId}/start`, { method: 'POST' }).catch((err) => {
+        console.error('Failed to start processing:', err);
+      });
+    } catch (err) {
+      console.error('Failed to start processing:', err);
+    }
+  }, [jobId, processingStarted]);
+
   useEffect(() => {
     if (!jobId) return;
 
@@ -56,6 +73,16 @@ export default function JobPage() {
 
     return () => clearInterval(pollInterval);
   }, [jobId, fetchJob, jobResult?.job.status]);
+
+  // Start processing when job is pending
+  useEffect(() => {
+    if (
+      jobResult?.job.status === 'pending' ||
+      jobResult?.job.status === 'fetching'
+    ) {
+      startProcessing();
+    }
+  }, [jobResult?.job.status, startProcessing]);
 
   // Loading state
   if (isLoading) {
