@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { chunkText, estimateTokens, getErrorMessage, retry } from '@/lib/utils';
 import type { Result, VideoMetadata } from '@/types';
 
@@ -11,9 +11,9 @@ interface ProgressCallback {
   (current: number, total: number): void;
 }
 
-// Max tokens per chunk - increased to reduce number of API calls for long videos
-// GPT-4o supports 128k context, so we can use larger chunks
-const MAX_TOKENS_PER_CHUNK = 15000;
+// Max tokens per chunk - Claude supports 200k context
+// Using larger chunks to reduce API calls
+const MAX_TOKENS_PER_CHUNK = 30000;
 const OVERLAP_TOKENS = 500;
 
 /**
@@ -66,10 +66,10 @@ async function searchSpeakers(
 }
 
 /**
- * Clean and format a single chunk of transcript using OpenAI
+ * Clean and format a single chunk of transcript using Claude
  */
 async function cleanChunk(
-  openai: OpenAI,
+  anthropic: Anthropic,
   chunk: string,
   videoMetadata: VideoMetadata,
   speakerContext: string,
@@ -98,21 +98,22 @@ Rules:
 
   const response = await retry(
     async () => {
-      return openai.chat.completions.create({
-        model: 'gpt-4o',
+      return anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 16000,
+        system: systemPrompt,
         messages: [
-          { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        temperature: 0.3, // Lower temperature for more consistent formatting
-        max_tokens: 16000, // Increased to handle larger chunks
       });
     },
     3,
     2000
   );
 
-  return response.choices[0]?.message?.content ?? chunk;
+  // Extract text from Claude's response
+  const textBlock = response.content.find(block => block.type === 'text');
+  return textBlock?.type === 'text' ? textBlock.text : chunk;
 }
 
 /**
@@ -141,14 +142,14 @@ export async function cleanTranscript(
   videoMetadata: VideoMetadata,
   onProgress?: ProgressCallback
 ): Promise<Result<CleanTranscriptResult>> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
-    return { ok: false, error: 'OpenAI API key not configured' };
+    return { ok: false, error: 'Anthropic API key not configured' };
   }
 
   try {
-    const openai = new OpenAI({ apiKey });
+    const anthropic = new Anthropic({ apiKey });
 
     // Estimate if we need chunking
     const totalTokens = estimateTokens(rawText);
@@ -165,7 +166,7 @@ export async function cleanTranscript(
       onProgress?.(1, 1);
 
       const cleaned = await cleanChunk(
-        openai,
+        anthropic,
         rawText,
         videoMetadata,
         speakerContext,
@@ -194,7 +195,7 @@ export async function cleanTranscript(
       if (!chunk) continue;
 
       const cleaned = await cleanChunk(
-        openai,
+        anthropic,
         chunk,
         videoMetadata,
         speakerContext,

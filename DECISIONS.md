@@ -90,13 +90,29 @@ This file tracks all engineering decisions made during development. When decisio
 
 ### [DECISION-005] AI Service: OpenAI GPT-4
 **Date:** 2026-01-29
-**Status:** Active
+**Status:** Superseded by DECISION-018
 **Context:** Need AI for transcript cleanup (formatting, speaker detection) and summarization
 **Decision:** Use OpenAI GPT-4 for both transcript cleanup and summary generation
 **Alternatives Considered:**
 - Anthropic Claude — strong at instructions but user preferred OpenAI
 - Multiple providers — unnecessary complexity
 **Consequences:** Single AI provider to manage, good long-form text handling, token costs for long podcasts need monitoring
+
+### [DECISION-018] AI Service: Switch to Anthropic Claude
+**Date:** 2026-01-30
+**Status:** Active
+**Context:** OpenAI GPT-4o on Tier 1 had restrictive rate limits (30k TPM) causing failures on long podcasts. Needed higher rate limits and better cost efficiency.
+**Decision:** Switch from OpenAI GPT-4o to Anthropic Claude Sonnet 4 for both transcript cleanup and summary generation
+**Alternatives Considered:**
+- OpenAI GPT-4o-mini — cheaper but same rate limit issues without spending $50+ to upgrade tier
+- Google Gemini — cheapest option but less proven for nuanced text understanding
+- Stay with OpenAI and upgrade tier — requires $50+ spend to unlock higher limits
+**Consequences:**
+- Better rate limits (40k+ TPM vs 30k)
+- Slightly higher cost per token ($3/$15 vs $2.50/$10) but more reliable
+- Excellent at following formatting instructions
+- Need to update SDK from OpenAI to Anthropic
+- Can now process full-length podcasts without truncation
 
 ---
 
@@ -244,10 +260,13 @@ This file tracks all engineering decisions made during development. When decisio
 
 This section documents when decisions are revised or superseded, providing context for why changes were made.
 
-<!-- Example:
-### [CHANGE-001] Switched from REST to tRPC
-**Date:** 2024-02-01
-**Supersedes:** DECISION-005 (Use REST API pattern)
-**Reason for Change:** Type safety across client/server became a priority
-**Impact:** Need to refactor existing API routes
--->
+### [CHANGE-001] Switched from OpenAI to Anthropic Claude
+**Date:** 2026-01-30
+**Supersedes:** DECISION-005 (AI Service: OpenAI GPT-4)
+**New Decision:** DECISION-018 (AI Service: Switch to Anthropic Claude)
+**Reason for Change:** OpenAI Tier 1 rate limits (30k TPM) were too restrictive for long podcasts, causing processing failures. Claude offers higher rate limits and excellent instruction-following for formatting tasks.
+**Impact:**
+- Replace OpenAI SDK with Anthropic SDK
+- Update all AI calls in clean-transcript.ts and summarize.ts
+- Add ANTHROPIC_API_KEY environment variable
+- Remove truncation workarounds (full transcripts can now be processed)

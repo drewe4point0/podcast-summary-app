@@ -1,41 +1,13 @@
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { chunkText, estimateTokens, getErrorMessage, retry } from '@/lib/utils';
 import type { Result, VideoMetadata } from '@/types';
 
 // Current prompt version - increment when making significant changes
-export const PROMPT_VERSION = 'v1';
+export const PROMPT_VERSION = 'v2-claude';
 
-// Max tokens for single-request summarization
-// Note: Limited by OpenAI TPM (tokens per minute) rate limits
-// If you hit rate limits, you may need to upgrade your OpenAI plan
-const MAX_SINGLE_REQUEST_TOKENS = 25000; // Conservative limit for rate limiting
-
-/**
- * Truncate text to approximately fit within token limit
- */
-function truncateToTokenLimit(text: string, maxTokens: number): string {
-  const currentTokens = estimateTokens(text);
-  if (currentTokens <= maxTokens) {
-    return text;
-  }
-
-  // Estimate ratio and truncate with some buffer
-  const ratio = maxTokens / currentTokens;
-  const targetChars = Math.floor(text.length * ratio * 0.95); // 5% buffer
-
-  // Try to truncate at a sentence boundary
-  const truncated = text.slice(0, targetChars);
-  const lastPeriod = truncated.lastIndexOf('.');
-  const lastQuestion = truncated.lastIndexOf('?');
-  const lastExclaim = truncated.lastIndexOf('!');
-  const lastSentence = Math.max(lastPeriod, lastQuestion, lastExclaim);
-
-  if (lastSentence > targetChars * 0.8) {
-    return truncated.slice(0, lastSentence + 1) + '\n\n[Transcript truncated due to length...]';
-  }
-
-  return truncated + '... [Transcript truncated due to length...]';
-}
+// Threshold for chunked summarization (very long podcasts)
+// Claude supports 200k context, but chunking improves quality for 3+ hour podcasts
+const CHUNKED_THRESHOLD = 80000;
 
 /**
  * Generate a summary from a cleaned transcript
@@ -44,27 +16,25 @@ export async function summarize(
   cleanedText: string,
   videoMetadata: VideoMetadata
 ): Promise<Result<string>> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
-    return { ok: false, error: 'OpenAI API key not configured' };
+    return { ok: false, error: 'Anthropic API key not configured' };
   }
 
   try {
-    const openai = new OpenAI({ apiKey });
+    const anthropic = new Anthropic({ apiKey });
 
-    // Check if transcript is too long and needs chunked summarization
+    // Check if transcript needs chunked summarization
     const totalTokens = estimateTokens(cleanedText);
 
-    if (totalTokens > MAX_SINGLE_REQUEST_TOKENS) {
-      // For long transcripts, truncate to fit within limits
-      // This is a tradeoff for Vercel Hobby plan - for better results, upgrade your plan
-      const truncatedText = truncateToTokenLimit(cleanedText, MAX_SINGLE_REQUEST_TOKENS - 2000);
-      console.log(`Transcript truncated from ${totalTokens} to ~${MAX_SINGLE_REQUEST_TOKENS - 2000} tokens`);
-      return summarizeDirect(openai, truncatedText, videoMetadata);
+    if (totalTokens > CHUNKED_THRESHOLD) {
+      // For very long transcripts, use chunked summarization
+      console.log(`Long transcript (${totalTokens} tokens) - using chunked summarization`);
+      return summarizeInChunks(anthropic, cleanedText, videoMetadata);
     }
 
-    return summarizeDirect(openai, cleanedText, videoMetadata);
+    return summarizeDirect(anthropic, cleanedText, videoMetadata);
   } catch (error) {
     return { ok: false, error: getErrorMessage(error) };
   }
@@ -74,7 +44,7 @@ export async function summarize(
  * Direct summarization for transcripts that fit in context
  */
 async function summarizeDirect(
-  openai: OpenAI,
+  anthropic: Anthropic,
   cleanedText: string,
   videoMetadata: VideoMetadata
 ): Promise<Result<string>> {
@@ -121,21 +91,21 @@ ${cleanedText}`;
 
   const response = await retry(
     async () => {
-      return openai.chat.completions.create({
-        model: 'gpt-4o',
+      return anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 8000,
+        system: systemPrompt,
         messages: [
-          { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        temperature: 0.5,
-        max_tokens: 4000,
       });
     },
     3,
     2000
   );
 
-  const summary = response.choices[0]?.message?.content;
+  const textBlock = response.content.find(block => block.type === 'text');
+  const summary = textBlock?.type === 'text' ? textBlock.text : null;
 
   if (!summary) {
     return { ok: false, error: 'Failed to generate summary' };
@@ -149,12 +119,12 @@ ${cleanedText}`;
  * Creates section summaries, then combines them
  */
 async function summarizeInChunks(
-  openai: OpenAI,
+  anthropic: Anthropic,
   cleanedText: string,
   videoMetadata: VideoMetadata
 ): Promise<Result<string>> {
-  // Split into manageable chunks (smaller to avoid TPM rate limits)
-  const chunks = chunkText(cleanedText, 20000, 500);
+  // Split into manageable chunks - Claude handles larger chunks well
+  const chunks = chunkText(cleanedText, 40000, 500);
 
   // Summarize each chunk
   const chunkSummaries: string[] = [];
@@ -163,34 +133,26 @@ async function summarizeInChunks(
     const chunk = chunks[i];
     if (!chunk) continue;
 
-    // Add delay between requests to avoid rate limits
-    if (i > 0) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
-
     const response = await retry(
       async () => {
-        return openai.chat.completions.create({
-          model: 'gpt-4o',
+        return anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          system: `Summarize this section of a podcast transcript. Focus on key points, insights, and notable quotes. This is part ${i + 1} of ${chunks.length}.`,
           messages: [
-            {
-              role: 'system',
-              content: `Summarize this section of a podcast transcript. Focus on key points, insights, and notable quotes. This is part ${i + 1} of ${chunks.length}.`,
-            },
             {
               role: 'user',
               content: `Podcast: ${videoMetadata.title}\n\nSection ${i + 1}:\n${chunk}`,
             },
           ],
-          temperature: 0.5,
-          max_tokens: 2000,
         });
       },
       3,
       2000
     );
 
-    const sectionSummary = response.choices[0]?.message?.content;
+    const textBlock = response.content.find(block => block.type === 'text');
+    const sectionSummary = textBlock?.type === 'text' ? textBlock.text : null;
     if (sectionSummary) {
       chunkSummaries.push(`### Part ${i + 1}\n${sectionSummary}`);
     }
@@ -201,12 +163,10 @@ async function summarizeInChunks(
 
   const finalResponse = await retry(
     async () => {
-      return openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          {
-            role: 'system',
-            content: `You have section summaries from a long podcast. Create a cohesive final summary that:
+      return anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 8000,
+        system: `You have section summaries from a long podcast. Create a cohesive final summary that:
 1. Synthesizes all sections into a unified overview
 2. Identifies the main themes across all sections
 3. Highlights the most important insights
@@ -218,7 +178,7 @@ Use this format:
 ## Key Insights & Takeaways
 ## Notable Quotes
 ## Action Items / Recommendations (if any)`,
-          },
+        messages: [
           {
             role: 'user',
             content: `Podcast: ${videoMetadata.title} by ${videoMetadata.channel}
@@ -227,15 +187,14 @@ Section summaries to synthesize:
 ${combinedSections}`,
           },
         ],
-        temperature: 0.5,
-        max_tokens: 4000,
       });
     },
     3,
     2000
   );
 
-  const finalSummary = finalResponse.choices[0]?.message?.content;
+  const textBlock = finalResponse.content.find(block => block.type === 'text');
+  const finalSummary = textBlock?.type === 'text' ? textBlock.text : null;
 
   if (!finalSummary) {
     return { ok: false, error: 'Failed to generate final summary' };
