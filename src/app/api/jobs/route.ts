@@ -1,10 +1,14 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { nanoid } from 'nanoid';
 import { createJobSchema } from '@/lib/validation';
 import { extractYouTubeId, fetchVideoMetadata, getErrorMessage } from '@/lib/utils';
 import { createAdminClient } from '@/lib/supabase/server';
 import { processJob } from '@/lib/pipeline/process-job';
 import type { Result, CreateJobResponse } from '@/types';
+
+// Vercel serverless functions have a max duration - set to 60s for Pro plan
+// For hobby plan, max is 10s which may not be enough for processing
+export const maxDuration = 60;
 
 export async function POST(request: Request): Promise<NextResponse<Result<CreateJobResponse>>> {
   try {
@@ -65,10 +69,14 @@ export async function POST(request: Request): Promise<NextResponse<Result<Create
       );
     }
 
-    // Start background processing (fire and forget)
-    // In production, this would be a queue/background job
-    processJob(jobId).catch((error) => {
-      console.error(`Background processing failed for job ${jobId}:`, error);
+    // Use Next.js `after` to run processing after response is sent
+    // This keeps the serverless function alive while processing runs
+    after(async () => {
+      try {
+        await processJob(jobId);
+      } catch (error) {
+        console.error(`Background processing failed for job ${jobId}:`, error);
+      }
     });
 
     // Return job ID and shareable URL
