@@ -5,8 +5,10 @@ import type { Result, VideoMetadata } from '@/types';
 // Current prompt version - increment when making significant changes
 export const PROMPT_VERSION = 'v1';
 
-// Max tokens for the context window
-const MAX_CONTEXT_TOKENS = 100000; // GPT-4o supports 128k
+// Max tokens for single-request summarization
+// Note: Limited by OpenAI TPM (tokens per minute) rate limits
+// If you hit rate limits, you may need to upgrade your OpenAI plan
+const MAX_SINGLE_REQUEST_TOKENS = 25000; // Conservative limit for rate limiting
 
 /**
  * Generate a summary from a cleaned transcript
@@ -27,7 +29,7 @@ export async function summarize(
     // Check if transcript is too long and needs chunked summarization
     const totalTokens = estimateTokens(cleanedText);
 
-    if (totalTokens > MAX_CONTEXT_TOKENS) {
+    if (totalTokens > MAX_SINGLE_REQUEST_TOKENS) {
       return summarizeInChunks(openai, cleanedText, videoMetadata);
     }
 
@@ -120,8 +122,8 @@ async function summarizeInChunks(
   cleanedText: string,
   videoMetadata: VideoMetadata
 ): Promise<Result<string>> {
-  // Split into manageable chunks
-  const chunks = chunkText(cleanedText, 50000, 500);
+  // Split into manageable chunks (smaller to avoid TPM rate limits)
+  const chunks = chunkText(cleanedText, 20000, 500);
 
   // Summarize each chunk
   const chunkSummaries: string[] = [];
@@ -129,6 +131,11 @@ async function summarizeInChunks(
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     if (!chunk) continue;
+
+    // Add delay between requests to avoid rate limits
+    if (i > 0) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
 
     const response = await retry(
       async () => {
