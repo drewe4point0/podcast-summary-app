@@ -11,6 +11,33 @@ export const PROMPT_VERSION = 'v1';
 const MAX_SINGLE_REQUEST_TOKENS = 25000; // Conservative limit for rate limiting
 
 /**
+ * Truncate text to approximately fit within token limit
+ */
+function truncateToTokenLimit(text: string, maxTokens: number): string {
+  const currentTokens = estimateTokens(text);
+  if (currentTokens <= maxTokens) {
+    return text;
+  }
+
+  // Estimate ratio and truncate with some buffer
+  const ratio = maxTokens / currentTokens;
+  const targetChars = Math.floor(text.length * ratio * 0.95); // 5% buffer
+
+  // Try to truncate at a sentence boundary
+  const truncated = text.slice(0, targetChars);
+  const lastPeriod = truncated.lastIndexOf('.');
+  const lastQuestion = truncated.lastIndexOf('?');
+  const lastExclaim = truncated.lastIndexOf('!');
+  const lastSentence = Math.max(lastPeriod, lastQuestion, lastExclaim);
+
+  if (lastSentence > targetChars * 0.8) {
+    return truncated.slice(0, lastSentence + 1) + '\n\n[Transcript truncated due to length...]';
+  }
+
+  return truncated + '... [Transcript truncated due to length...]';
+}
+
+/**
  * Generate a summary from a cleaned transcript
  */
 export async function summarize(
@@ -30,7 +57,11 @@ export async function summarize(
     const totalTokens = estimateTokens(cleanedText);
 
     if (totalTokens > MAX_SINGLE_REQUEST_TOKENS) {
-      return summarizeInChunks(openai, cleanedText, videoMetadata);
+      // For long transcripts, truncate to fit within limits
+      // This is a tradeoff for Vercel Hobby plan - for better results, upgrade your plan
+      const truncatedText = truncateToTokenLimit(cleanedText, MAX_SINGLE_REQUEST_TOKENS - 2000);
+      console.log(`Transcript truncated from ${totalTokens} to ~${MAX_SINGLE_REQUEST_TOKENS - 2000} tokens`);
+      return summarizeDirect(openai, truncatedText, videoMetadata);
     }
 
     return summarizeDirect(openai, cleanedText, videoMetadata);
