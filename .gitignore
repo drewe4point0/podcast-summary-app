@@ -48,3 +48,4 @@ ehthumbs.db
 *.log
 *.tmp
 *.temp
+.vercel
