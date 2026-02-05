@@ -22,7 +22,7 @@ Use this checklist to start a brand-new project and ship a working MVP in one da
   ```
 - [ x] Verify installation (run `/help` and confirm the workflow commands are available)
 
-- [ ] Open CLAUDE.md file and edit the first two lines (Project and Description)
+- [ x] Open CLAUDE.md file and edit the first two lines (Project and Description)
 
 ---
 

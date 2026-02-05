@@ -84,6 +84,18 @@ This creates a searchable history of why the project is built the way it is.
 
 ---
 
+## Deployment
+
+**Auto-deploy to Vercel:** Pushing to `main` automatically triggers a Vercel deployment.
+
+- Production deploys from `main` branch
+- Preview deploys from pull requests
+- No manual deploy commands needed — just push to Git
+
+If Vercel is not yet connected, set it up at [vercel.com](https://vercel.com) by importing the Git repository.
+
+---
+
 ## Workflow
 
 1. **Plan first** — Use Plan Mode (shift+tab twice). Go back and forth until the plan is solid. Then switch to auto-accept and execute.
